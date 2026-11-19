@@ -73,9 +73,12 @@ final public class AppRootNavigationController: UINavigationController {
 
     /// Replaces the whole stack with `flow.contentController`, using `flow.transition`
     /// (or the default push from the right). Runs immediately.
-    public func setRoot(_ flow: any AppRootFlow) {
+    ///
+    /// Pass `pushing` to land on screens above the root in the same step, e.g. from a deep link:
+    /// `nav.setRoot(AppFlow.home, pushing: [ProfileViewController(id: 42)])`.
+    public func setRoot(_ flow: any AppRootFlow, pushing viewControllers: [UIViewController] = []) {
         view.layer.add(flow.transition ?? Self.defaultTransition, forKey: kCATransition)
-        setViewControllers([flow.contentController], animated: false)
+        setViewControllers([flow.contentController] + viewControllers, animated: false)
     }
 
     // Subscribed in init, not viewDidLoad, so a send before the view loads isn't lost.

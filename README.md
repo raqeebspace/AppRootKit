@@ -36,6 +36,7 @@ router.setRoot(.home)          // SwiftUI
 - Animated root transitions, with a default push and per-root overrides.
 - Pick the first root from your own logic (`AppRootProvider`): "has the user finished onboarding?"
 - SwiftUI: a type-safe `NavigationStack` per root, or one per tab, with `push` / `pop` / `popToRoot`.
+- **Deep links and universal links**: land on any root, tab and screen stack in one call.
 - No dependencies.
 
 ## 🤔 Which library do I need?
@@ -54,7 +55,7 @@ Both products come from the same package, so you can add one or both.
 ### Xcode
 
 1. **File → Add Package Dependencies…**
-2. Enter `https://github.com/raqeebspace/approotnavigation.git`
+2. Enter `https://github.com/raqeebspace/AppRootKit.git`
 3. Dependency rule: **Up to Next Major Version** from `1.2.0`.
 4. Pick `AppRootUIKit`, `AppRootKit`, or both for your target.
 
@@ -62,14 +63,14 @@ Both products come from the same package, so you can add one or both.
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/raqeebspace/approotnavigation.git", from: "1.2.0")
+    .package(url: "https://github.com/raqeebspace/AppRootKit.git", from: "1.2.0")
 ],
 targets: [
     .target(
         name: "MyApp",
         dependencies: [
-            .product(name: "AppRootUIKit", package: "approotnavigation"), // UIKit
-            .product(name: "AppRootKit", package: "approotnavigation"),   // SwiftUI
+            .product(name: "AppRootUIKit", package: "AppRootKit"), // UIKit
+            .product(name: "AppRootKit", package: "AppRootKit"),   // SwiftUI
         ]
     )
 ]
@@ -171,6 +172,27 @@ To switch every window at once (for example on logout in an iPad app with severa
 ```swift
 AppRootNavigationController.setRootInAllWindows(AppFlow.onboarding)
 ```
+
+### Deep links
+
+AppRootUIKit doesn't parse URLs. Your app turns a URL into a root and screens. Pass the screens
+above the root with `pushing:`, and the controller lands on them in one step:
+
+```swift
+// SceneDelegate
+func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+    guard let url = URLContexts.first?.url,
+          let navigation = window?.rootViewController as? AppRootNavigationController else { return }
+
+    if url.host == "profile", let id = Int(url.lastPathComponent) {
+        navigation.setRoot(AppFlow.home, pushing: [ProfileViewController(id: id)])
+    }
+}
+```
+
+For a link that launches the app, read `connectionOptions.urlContexts` in
+`scene(_:willConnectTo:options:)` and do the same. For universal links, see
+[Universal links](#universal-links).
 
 ### Custom transitions
 
@@ -303,22 +325,117 @@ struct MainTabView: View {
     @EnvironmentObject private var router: AppRouter<AppFlow>
 
     var body: some View {
-        TabView {
+        TabView(selection: router.stackSelection(default: Tab.home)) {
             AppStack(router: router, id: Tab.home) { HomeTab() }
                 .tabItem { Label("Home", systemImage: "house") }
+                .tag(Tab.home)
             AppStack(router: router, id: Tab.account) { AccountTab() }
                 .tabItem { Label("Account", systemImage: "person.crop.circle") }
+                .tag(Tab.account)
         }
     }
 }
 ```
 
+- `router.stackSelection(default:)` lets the router own the selected tab. Tag each tab with its
+  `AppStack` id. You need it for deep links into a tab.
 - `router.push` / `pop` / `popToRoot` act on the **selected tab's** stack. Each `AppStack`
   activates itself when its tab appears, and each tab keeps its pushed screens when you switch.
 - To switch tabs and push in one action, call `router.activateStack(Tab.account)` before `push`.
 - `router.setRoot(.home)` from inside the tabs clears every tab's stack. A switch to another
   root replaces the whole tab bar, which slides out with its pushed screens.
 - Read a tab's stack with `router.path(for: Tab.home)`.
+
+### Deep links
+
+AppRootKit doesn't parse URLs. Your app turns a URL into a root, a tab and screens. Then one
+call lands there, from any root:
+
+```swift
+AppRootView(router: router)
+    .onOpenURL { url in
+        guard url.host == "profile", let id = Int(url.lastPathComponent) else { return }
+
+        // A root with its own stack:
+        router.open(.home, path: [.profile(id: id)])
+
+        // A tab bar: selects the tab and sets its stack
+        router.open(.home, stack: Tab.account, path: [.settings, .profile(id: id)])
+    }
+```
+
+| Call | Effect |
+|---|---|
+| `router.open(_:path:)` | Switch to the root and set its own stack |
+| `router.open(_:stack:path:)` | Switch to the root, select the `AppStack` (tab) and set its stack |
+| `router.setPath(_:for:)` | Replace one tab's stack without switching roots |
+
+For `open(_:stack:path:)` to show the right tab, bind the `TabView` with
+`router.stackSelection(default:)` (see **Tab bar**). Decide in your own code what a logged-out
+user sees, before you call `open`.
+
+### Universal links
+
+A universal link (`https://example.com/profile/42`) uses the same router calls as a custom
+scheme. Only the delivery and the parsing change.
+
+**1. Let iOS open your app for your domain.** This needs a paid Apple Developer account.
+
+- In Xcode, open **Signing & Capabilities**, add **Associated Domains**, and add
+  `applinks:example.com`.
+- Serve this file at `https://example.com/.well-known/apple-app-site-association`, as JSON,
+  over HTTPS, with no redirect:
+
+```json
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["TEAMID.com.example.MyApp"],
+        "components": [{ "/": "/profile/*" }, { "/": "/settings" }]
+      }
+    ]
+  }
+}
+```
+
+**2. Receive the link.**
+
+| | App running | App launched by the link |
+|---|---|---|
+| SwiftUI | `.onOpenURL` (the same one as custom schemes) | `.onOpenURL` |
+| UIKit | `scene(_:continue:)` | `connectionOptions.userActivities` in `scene(_:willConnectTo:options:)` |
+
+```swift
+// UIKit: SceneDelegate
+func scene(_ scene: UIScene, continue userActivity: NSUserActivity) {
+    guard userActivity.activityType == NSUserActivityTypeBrowsingWeb,
+          let url = userActivity.webpageURL,
+          let navigation = window?.rootViewController as? AppRootNavigationController else { return }
+    DeepLink.open(url, in: navigation)
+}
+```
+
+**3. Read the route from the path.** In a universal link, `url.host` is your domain, so the
+route is in `url.pathComponents`. Check the host before you trust a link. One function can
+serve both kinds:
+
+```swift
+static func route(of url: URL) -> [String]? {
+    let path = url.pathComponents.filter { $0 != "/" }
+    switch url.scheme {
+    case "myapp":                                  // myapp://profile/42
+        return [url.host].compactMap { $0 } + path
+    case "https" where url.host == "example.com":  // https://example.com/profile/42
+        return path
+    default:
+        return nil                                 // not our link
+    }
+}
+```
+
+Both example apps do this in `DeepLink.swift`. Set `universalLinkHost` to your domain and add
+the entitlement to try universal links. Custom-scheme links work without any setup.
 
 ### Transitions and animations
 
@@ -375,13 +492,21 @@ onboarding ──Get started──▶ login ──Log in──▶ home (tabs) �
 
 | Target | Shows |
 |---|---|
-| `UIKitExample` | `AppRootNavigationController(state:)` in `SceneDelegate`, `setRoot`, `setRootInAllWindows` on logout, a fade and a push-from-left `CATransition` |
-| `SwiftUIExample` | `AppRouter(state:)` + `AppRootView`, a tab bar with one stack per tab as the home root, typed `push` / `pop` / `popToRoot`, `setRoot` from deep in a stack, per-root transition and animation |
+| `UIKitExample` | `AppRootNavigationController(state:)` in `SceneDelegate`, `setRoot`, `setRootInAllWindows` on logout, a fade and a push-from-left `CATransition`, deep links and universal links with `setRoot(_:pushing:)` |
+| `SwiftUIExample` | `AppRouter(state:)` + `AppRootView`, a tab bar with one stack per tab as the home root, typed `push` / `pop` / `popToRoot`, `setRoot` from deep in a stack, per-root transition and animation, deep links and universal links into a tab with `open(_:stack:path:)` |
 
 Open **`Examples/Examples.xcworkspace`** (not the `.xcodeproj` or `Package.swift`), pick a scheme,
 and run. The workspace holds the package and both apps in one window, so you can edit the
 library and run an app side by side. The app remembers onboarding and login between launches
 (`UserDefaults`). To start over, use **Reset onboarding** on the home screen.
+
+Try the deep links on a booted simulator (iOS asks once if it may open the app):
+
+```bash
+xcrun simctl openurl booted approot-swiftui://profile/Grace   # Explore tab → Grace
+xcrun simctl openurl booted approot-swiftui://settings        # Account tab → Settings
+xcrun simctl openurl booted approot-uikit://details/3         # Home → Details 1 → 2 → 3
+```
 
 ## 🔀 Using both libraries in one app
 
@@ -405,7 +530,7 @@ Both libraries re-export it, so you never import it yourself.
 | Type | Members |
 |---|---|
 | `AppRootFlow` | `contentController` · `transition` · `key` · `isVisited` |
-| `AppRootNavigationController` | `init(rootController:isNavBarHidden:)` · `init(state:isNavBarHidden:)` · `setRoot(_:)` · `static setRootInAllWindows(_:)` |
+| `AppRootNavigationController` | `init(rootController:isNavBarHidden:)` · `init(state:isNavBarHidden:)` · `setRoot(_:pushing:)` · `static setRootInAllWindows(_:)` |
 
 **SwiftUI (`AppRootKit`)**
 
@@ -413,7 +538,7 @@ Both libraries re-export it, so you never import it yourself.
 |---|---|
 | `AppRootFlow` | `contentView` · `Screen` · `transition` · `animation` · `usesNavigationStack` |
 | `Routable` | `contentView` |
-| `AppRouter<Root>` | `init(root:)` · `init(state:)` · `root` · `path` · `setRoot(_:)` · `push(_:)` · `pop()` · `popToRoot()` · `activeStack` · `activateStack(_:)` · `path(for:)` |
+| `AppRouter<Root>` | `init(root:)` · `init(state:)` · `root` · `path` · `setRoot(_:)` · `push(_:)` · `pop()` · `popToRoot()` · `activeStack` · `activateStack(_:)` · `path(for:)` · `setPath(_:for:)` · `open(_:path:)` · `open(_:stack:path:)` · `stackSelection(default:)` |
 | `AppStack<Root, Content>` | `init(router:id:content:)` |
 | `AppRootView<Root>` | `init(router:transition:animation:)` |
 
@@ -453,12 +578,13 @@ Embedded Content**. In `Package.swift`:
 .product(name: "AppRootNavigation", package: "AppRootNavigation"),
 
 // After
-.package(url: "https://github.com/raqeebspace/approotnavigation.git", from: "1.2.0"),
-.product(name: "AppRootUIKit", package: "approotnavigation"),
+.package(url: "https://github.com/raqeebspace/AppRootKit.git", from: "1.2.0"),
+.product(name: "AppRootUIKit", package: "AppRootKit"),
 ```
 
-The repository now lives under `raqeebspace`, so update the URL. The package identity is still
-`approotnavigation` (from the URL), so your existing `package:` argument keeps resolving.
+The repository is now `raqeebspace/AppRootKit`. GitHub redirects the old URL, so an unchanged
+`Package.swift` keeps resolving. When you switch to the new URL, also change `package:` to
+`"AppRootKit"`: SwiftPM names the package after the last part of the URL.
 
 ### Step 2: Change the imports
 
@@ -553,4 +679,4 @@ MIT. See [LICENSE](LICENSE).
 
 ## 📬 Contact
 
-Questions or feature requests: [GitHub Issues](https://github.com/raqeebspace/approotnavigation/issues).
+Questions or feature requests: [GitHub Issues](https://github.com/raqeebspace/AppRootKit/issues).

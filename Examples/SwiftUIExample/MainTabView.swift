@@ -28,10 +28,10 @@ enum MainTab: Hashable {
 /// acts on the selected tab's stack; switching tabs keeps each tab's pushed screens.
 struct MainTabView: View {
     @EnvironmentObject private var router: AppRouter<AppFlow>
-    @State private var tab: MainTab = .home
 
     var body: some View {
-        TabView(selection: $tab) {
+        // The router owns the selected tab, so a deep link can switch tabs.
+        TabView(selection: router.stackSelection(default: MainTab.home)) {
             AppStack(router: router, id: MainTab.home) { HomeTab() }
                 .tabItem { Label(MainTab.home.title, systemImage: MainTab.home.icon) }
                 .tag(MainTab.home)

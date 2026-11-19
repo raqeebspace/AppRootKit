@@ -42,6 +42,14 @@ final class AppRootNavigationControllerTests: XCTestCase {
         XCTAssertEqual(provider.currentAppRoot.key, "onboarding")
     }
 
+    func testSetRootPushingLandsOnDeepLinkedScreen() {
+        let nav = AppRootNavigationController(rootController: UIViewController())
+        let detail = UIViewController()
+        detail.title = "detail"
+        nav.setRoot(Flow.home, pushing: [detail])
+        XCTAssertEqual(nav.viewControllers.map(\.title), ["home", "detail"])
+    }
+
     func testSetRootReplacesStack() {
         let nav = AppRootNavigationController(rootController: UIViewController())
         nav.pushViewController(UIViewController(), animated: false)

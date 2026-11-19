@@ -101,6 +101,45 @@ final class AppRouterTests: XCTestCase {
     }
 
     @MainActor
+    func testOpenWithPath() {
+        let router = AppRouter(root: Root.onboarding)
+        router.push(.b)
+        router.open(.home, path: [.a, .b])
+        XCTAssertEqual(router.root, .home)
+        XCTAssertEqual(router.path, [.a, .b])
+    }
+
+    @MainActor
+    func testOpenSelectsStackAndSetsItsPath() {
+        let router = AppRouter(root: Root.onboarding)
+        router.open(.home, stack: "account", path: [.b])
+        XCTAssertEqual(router.root, .home)
+        XCTAssertEqual(router.activeStack, AnyHashable("account"))
+        XCTAssertEqual(router.path(for: "account"), [.b])
+        XCTAssertTrue(router.path.isEmpty)
+        router.push(.a) // later pushes land on the opened stack
+        XCTAssertEqual(router.path(for: "account"), [.b, .a])
+    }
+
+    @MainActor
+    func testStackSelectionBinding() {
+        let router = AppRouter(root: Root.home)
+        let selection = router.stackSelection(default: "feed")
+        XCTAssertEqual(selection.wrappedValue, "feed") // nothing active yet
+        selection.wrappedValue = "account"
+        XCTAssertEqual(router.activeStack, AnyHashable("account"))
+        router.activateStack("feed")
+        XCTAssertEqual(selection.wrappedValue, "feed")
+    }
+
+    @MainActor
+    func testSetPathForStack() {
+        let router = AppRouter(root: Root.home)
+        router.setPath([.a, .b], for: "feed")
+        XCTAssertEqual(router.path(for: "feed"), [.a, .b])
+    }
+
+    @MainActor
     func testPerRootTransitionAndAnimation() {
         XCTAssertNil(Root.home.transition)       // default: AppRootView's transition
         XCTAssertNil(Root.home.animation)        // default: AppRootView's animation

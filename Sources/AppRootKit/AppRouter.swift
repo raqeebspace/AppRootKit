@@ -79,6 +79,50 @@ public final class AppRouter<Root: AppRootFlow>: ObservableObject {
         stacks[AnyHashable(stack)] ?? []
     }
 
+    /// Replaces the path of the `AppStack` with this id, e.g. from a deep link.
+    public func setPath<ID: Hashable>(_ path: [Root.Screen], for stack: ID) {
+        stacks[AnyHashable(stack)] = path
+    }
+
+    // MARK: - Deep links
+
+    /// Shows `root` with `path` pushed on its own stack, in one call. Use it for deep links
+    /// into a root with `usesNavigationStack == true`.
+    ///
+    /// ```swift
+    /// .onOpenURL { url in router.open(.home, path: [.profile(id: 42)]) }
+    /// ```
+    public func open(_ root: Root, path newPath: [Root.Screen] = []) {
+        setRoot(root)
+        path = newPath
+    }
+
+    /// Shows `root`, selects the `AppStack` (e.g. the tab) with this id, and sets its path,
+    /// in one call. Use it for deep links into a tab bar. Bind the `TabView` to
+    /// `stackSelection(default:)` so it shows the selected tab.
+    ///
+    /// ```swift
+    /// router.open(.home, stack: Tab.account, path: [.profile(id: 42)])
+    /// ```
+    public func open<ID: Hashable>(_ root: Root, stack: ID, path newPath: [Root.Screen] = []) {
+        setRoot(root)
+        activateStack(stack)
+        setPath(newPath, for: stack)
+    }
+
+    /// A `TabView(selection:)` binding backed by the active stack, so `open(_:stack:path:)`
+    /// and `activateStack(_:)` switch tabs. Tag each tab with its `AppStack` id.
+    ///
+    /// ```swift
+    /// TabView(selection: router.stackSelection(default: Tab.home)) { ... }
+    /// ```
+    public func stackSelection<ID: Hashable>(default defaultStack: ID) -> Binding<ID> {
+        Binding(
+            get: { (self.activeStack?.base as? ID) ?? defaultStack },
+            set: { self.activateStack($0) }
+        )
+    }
+
     /// Makes `push` / `pop` / `popToRoot` act on this `AppStack`. `AppStack` calls it when it
     /// appears; call it yourself when you switch tabs and push in the same action.
     public func activateStack<ID: Hashable>(_ stack: ID) {
